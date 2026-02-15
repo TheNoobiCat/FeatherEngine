@@ -19,6 +19,15 @@ const orderbookABIJSON = `[
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "orderId", "type": "bytes32"},
+      {"indexed": true, "name": "seriesId", "type": "bytes32"}
+    ],
+    "name": "LimitOrderCancelled",
+    "type": "event"
+  },
+  {
     "inputs": [
       {"name": "seriesId", "type": "bytes32"}
     ],
@@ -77,8 +86,6 @@ const optionMarketABIJSON = `[
     "outputs": [
       {"name": "deployer", "type": "address"},
       {"name": "community", "type": "bool"},
-      {"name": "totalOpenInterest", "type": "uint256"},
-      {"name": "totalVolume", "type": "uint256"},
       {"name": "contractSizeInAsset", "type": "uint256"}
     ],
     "stateMutability": "view",
