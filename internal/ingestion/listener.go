@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -93,39 +94,89 @@ func (l *Listener) KnownSeries() map[[32]byte]models.Series {
 }
 
 // Start subscribes to LimitOrderCreated events and processes them in real-time.
+// Includes automatic reconnection with exponential backoff if the WebSocket subscription drops.
 func (l *Listener) Start(ctx context.Context) error {
-	// Subscribe to LimitOrderCreated events from the Orderbook contract
+	go l.subscribeWithReconnect(ctx)
+	return nil
+}
+
+// subscribeWithReconnect manages the WebSocket subscription lifecycle with exponential backoff.
+func (l *Listener) subscribeWithReconnect(ctx context.Context) {
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 60 * time.Second
+		backoffFactor  = 2
+	)
+
+	backoff := initialBackoff
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		err := l.subscribe(ctx)
+		if err == nil {
+			// subscription ran and ended cleanly (context cancelled)
+			return
+		}
+
+		log.Printf("[ingestion] subscription ended: %v — reconnecting in %s", err, backoff)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		// Exponential backoff with cap
+		backoff *= time.Duration(backoffFactor)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// subscribe creates a single subscription session. Returns nil on clean context cancellation,
+// or an error if the subscription dropped unexpectedly.
+func (l *Listener) subscribe(ctx context.Context) error {
 	orderCreatedSig := OrderbookABI.Events["LimitOrderCreated"].ID
+	orderCancelledSig := OrderbookABI.Events["LimitOrderCancelled"].ID
 
 	query := ethereum.FilterQuery{
 		Addresses: []common.Address{l.cfg.OrderbookAddr},
-		Topics:    [][]common.Hash{{orderCreatedSig}},
+		Topics:    [][]common.Hash{{orderCreatedSig, orderCancelledSig}},
 	}
 
 	logCh := make(chan types.Log, 256)
 	sub, err := l.client.SubscribeFilterLogs(ctx, query, logCh)
 	if err != nil {
-		return fmt.Errorf("subscribe LimitOrderCreated: %w", err)
+		return fmt.Errorf("subscribe order events: %w", err)
 	}
 
-	log.Printf("[ingestion] subscribed to LimitOrderCreated on %s", l.cfg.OrderbookAddr.Hex())
+	log.Printf("[ingestion] subscribed to LimitOrderCreated and LimitOrderCancelled on %s", l.cfg.OrderbookAddr.Hex())
 
-	go func() {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case err := <-sub.Err():
-				log.Printf("[ingestion] subscription error: %v", err)
-				return
-			case vLog := <-logCh:
+	defer sub.Unsubscribe()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-sub.Err():
+			return fmt.Errorf("subscription error: %w", err)
+		case vLog := <-logCh:
+			if len(vLog.Topics) == 0 {
+				continue
+			}
+			eventSig := vLog.Topics[0]
+			if eventSig == orderCreatedSig {
 				l.handleOrderCreated(ctx, vLog)
+			} else if eventSig == orderCancelledSig {
+				l.handleOrderCancelled(ctx, vLog)
 			}
 		}
-	}()
-
-	return nil
+	}
 }
 
 func (l *Listener) handleOrderCreated(ctx context.Context, vLog types.Log) {
@@ -159,6 +210,34 @@ func (l *Listener) handleOrderCreated(ctx context.Context, vLog types.Log) {
 	l.books.AddOrder(order)
 	log.Printf("[ingestion] new order %x series=%x long=%v price=%s qty=%s",
 		oid[:6], sid[:6], order.IsLong, order.LimitPrice.String(), order.Quantity.String())
+}
+
+func (l *Listener) handleOrderCancelled(ctx context.Context, vLog types.Log) {
+	if len(vLog.Topics) < 3 {
+		return
+	}
+	orderID := vLog.Topics[1]
+	seriesID := vLog.Topics[2]
+
+	var oid, sid [32]byte
+	copy(oid[:], orderID[:])
+	copy(sid[:], seriesID[:])
+
+	// We need to know if the order was long or short to remove from correct side
+	// Fetch order first to get isLong (if it still exists on-chain, it won't after cancel)
+	// Actually, after cancel the order no longer exists on-chain, so we need to track
+	// isLong in memory or try both sides. Let's try both sides (simpler).
+
+	removed := l.books.RemoveOrder(sid, oid, true) // Try bid side
+	if !removed {
+		removed = l.books.RemoveOrder(sid, oid, false) // Try ask side
+	}
+
+	if removed {
+		log.Printf("[ingestion] cancelled order %x series=%x", oid[:6], sid[:6])
+	} else {
+		log.Printf("[ingestion] cancel event for unknown order %x series=%x", oid[:6], sid[:6])
+	}
 }
 
 func (l *Listener) fetchOrder(ctx context.Context, seriesID, orderID [32]byte) (*models.Order, error) {
@@ -245,25 +324,34 @@ func (l *Listener) ensureSeries(ctx context.Context, seriesID [32]byte) {
 	l.knownSeriesMu.Unlock()
 }
 
-// FetchExistingOrders replays past LimitOrderCreated events to populate the book on startup.
+// FetchExistingOrders replays past LimitOrderCreated and LimitOrderCancelled events to populate the book on startup.
 func (l *Listener) FetchExistingOrders(ctx context.Context, fromBlock uint64) error {
 	orderCreatedSig := OrderbookABI.Events["LimitOrderCreated"].ID
+	orderCancelledSig := OrderbookABI.Events["LimitOrderCancelled"].ID
 
 	query := ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Addresses: []common.Address{l.cfg.OrderbookAddr},
-		Topics:    [][]common.Hash{{orderCreatedSig}},
+		Topics:    [][]common.Hash{{orderCreatedSig, orderCancelledSig}},
 	}
 
 	logs, err := l.client.FilterLogs(ctx, query)
 	if err != nil {
-		return fmt.Errorf("filter past orders: %w", err)
+		return fmt.Errorf("filter past order events: %w", err)
 	}
 
 	log.Printf("[ingestion] replaying %d historical order events from block %d", len(logs), fromBlock)
 
 	for _, vLog := range logs {
-		l.handleOrderCreated(ctx, vLog)
+		if len(vLog.Topics) == 0 {
+			continue
+		}
+		eventSig := vLog.Topics[0]
+		if eventSig == orderCreatedSig {
+			l.handleOrderCreated(ctx, vLog)
+		} else if eventSig == orderCancelledSig {
+			l.handleOrderCancelled(ctx, vLog)
+		}
 	}
 
 	return nil

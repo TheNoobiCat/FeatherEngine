@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -16,6 +17,7 @@ import (
 	"github.com/thenoobicat/featherengine/internal/ingestion"
 	"github.com/thenoobicat/featherengine/internal/models"
 	"github.com/thenoobicat/featherengine/internal/orderbook"
+	"github.com/thenoobicat/featherengine/internal/revert"
 )
 
 // Matcher periodically scans for crossing orders and submits bulkMatch transactions.
@@ -132,32 +134,66 @@ func (m *Matcher) submitBulkMatch(ctx context.Context, matches []models.Match) e
 		return fmt.Errorf("pack bulkMatch: %w", err)
 	}
 
+	// Pre-flight simulation via eth_call to catch reverts before spending gas
+	simMsg := ethereum.CallMsg{
+		From: m.cfg.WalletAddr,
+		To:   &m.cfg.OrderbookAddr,
+		Gas:  m.cfg.GasLimit,
+		Data: callData,
+	}
+	if _, err := m.client.CallContract(ctx, simMsg, nil); err != nil {
+		reason := revert.ExtractRevertReason(err)
+		return fmt.Errorf("simulation reverted: %s", reason)
+	}
+
 	nonce, err := m.client.PendingNonceAt(ctx, m.cfg.WalletAddr)
 	if err != nil {
 		return fmt.Errorf("get nonce: %w", err)
 	}
 
-	gasPrice, err := m.client.SuggestGasPrice(ctx)
+	// Get base fee from latest block for EIP-1559
+	header, err := m.client.HeaderByNumber(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("suggest gas price: %w", err)
+		return fmt.Errorf("get latest header: %w", err)
+	}
+	baseFee := header.BaseFee
+	if baseFee == nil {
+		baseFee = big.NewInt(100000000) // 0.1 gwei fallback
 	}
 
-	// Cap gas price
-	if gasPrice.Cmp(m.cfg.MaxGasPriceWei) > 0 {
-		log.Printf("[matcher] gas price %s > max %s, skipping", gasPrice.String(), m.cfg.MaxGasPriceWei.String())
+	// Suggest priority fee (tip)
+	tipCap, err := m.client.SuggestGasTipCap(ctx)
+	if err != nil {
+		log.Printf("[matcher] SuggestGasTipCap failed: %v, using default 0.01 gwei", err)
+		tipCap = big.NewInt(10000000) // 0.01 gwei
+	}
+
+	// EIP-1559: maxFeePerGas = (2 * baseFee) + maxPriorityFeePerGas
+	// This allows for baseFee to double in the next block
+	maxFeePerGas := new(big.Int).Add(
+		new(big.Int).Mul(baseFee, big.NewInt(2)),
+		tipCap,
+	)
+
+	// Cap max fee to config limit
+	if maxFeePerGas.Cmp(m.cfg.MaxGasPriceWei) > 0 {
+		log.Printf("[matcher] maxFeePerGas %s > max %s, skipping", maxFeePerGas.String(), m.cfg.MaxGasPriceWei.String())
 		return nil
 	}
 
-	tx := types.NewTransaction(
-		nonce,
-		m.cfg.OrderbookAddr,
-		big.NewInt(0),
-		m.cfg.GasLimit,
-		gasPrice,
-		callData,
-	)
+	// Create EIP-1559 transaction
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   m.cfg.ChainID,
+		Nonce:     nonce,
+		GasTipCap: tipCap,
+		GasFeeCap: maxFeePerGas,
+		Gas:       m.cfg.GasLimit,
+		To:        &m.cfg.OrderbookAddr,
+		Value:     big.NewInt(0),
+		Data:      callData,
+	})
 
-	signer := types.NewEIP155Signer(m.cfg.ChainID)
+	signer := types.LatestSignerForChainID(m.cfg.ChainID)
 	signedTx, err := types.SignTx(tx, signer, m.cfg.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("sign tx: %w", err)
@@ -167,8 +203,8 @@ func (m *Matcher) submitBulkMatch(ctx context.Context, matches []models.Match) e
 		return fmt.Errorf("send tx: %w", err)
 	}
 
-	log.Printf("[matcher] submitted bulkMatch tx=%s matches=%d nonce=%d gas_price=%s",
-		signedTx.Hash().Hex(), len(matches), nonce, gasPrice.String())
+	log.Printf("[matcher] submitted bulkMatch tx=%s matches=%d nonce=%d maxFee=%s tip=%s baseFee=%s",
+		signedTx.Hash().Hex(), len(matches), nonce, maxFeePerGas.String(), tipCap.String(), baseFee.String())
 
 	// Wait for receipt
 	receipt, err := bind.WaitMined(ctx, m.client, signedTx)
@@ -177,11 +213,32 @@ func (m *Matcher) submitBulkMatch(ctx context.Context, matches []models.Match) e
 	}
 
 	if receipt.Status == 0 {
-		return fmt.Errorf("tx reverted: %s", signedTx.Hash().Hex())
+		// Try to extract revert reason via eth_call replay
+		reason := m.extractRevertReason(ctx, signedTx)
+		return fmt.Errorf("tx reverted: %s — %s", signedTx.Hash().Hex(), reason)
 	}
 
 	log.Printf("[matcher] bulkMatch confirmed tx=%s block=%d gas_used=%d",
 		signedTx.Hash().Hex(), receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
 	return nil
+}
+
+// extractRevertReason replays the transaction via eth_call to get the revert reason
+func (m *Matcher) extractRevertReason(ctx context.Context, tx *types.Transaction) string {
+	msg := ethereum.CallMsg{
+		From:      m.cfg.WalletAddr,
+		To:        tx.To(),
+		Gas:       tx.Gas(),
+		GasFeeCap: tx.GasFeeCap(),
+		GasTipCap: tx.GasTipCap(),
+		Value:     tx.Value(),
+		Data:      tx.Data(),
+	}
+
+	_, err := m.client.CallContract(ctx, msg, nil)
+	if err != nil {
+		return revert.ExtractRevertReason(err)
+	}
+	return "unknown (call succeeded on replay)"
 }
