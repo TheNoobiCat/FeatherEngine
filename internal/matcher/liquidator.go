@@ -130,8 +130,12 @@ func (liq *Liquidator) scan(ctx context.Context) {
 }
 
 func (liq *Liquidator) liquidatePosition(ctx context.Context, trader common.Address, seriesID [32]byte) {
-	// Empty priceUpdateData — the on-chain contract calls Oracle.getPriceNoUpdate
-	// which uses cached Pyth prices. In production, you'd pass fresh update data.
+	// PRICE DATA LIMITATION: this reference implementation sends an empty
+	// priceUpdateData array, so the on-chain contract falls back to cached
+	// Pyth prices (Oracle.getPriceNoUpdate). Stale cached prices can make
+	// liquidations revert or execute at the wrong price during volatility.
+	// Production deployments must fetch fresh Pyth update data (e.g. from
+	// Hermes) and pass it here. No Pyth updater is included in this repo.
 	emptyPriceData := make([][]byte, 0)
 
 	callData, err := optionMarketLiqABI.Pack("liquidatePosition", trader, seriesID, emptyPriceData)
@@ -147,6 +151,9 @@ func (liq *Liquidator) liquidatePosition(ctx context.Context, trader common.Addr
 }
 
 func (liq *Liquidator) settlePosition(ctx context.Context, trader common.Address, seriesID [32]byte) {
+	// Same stale-price limitation as liquidatePosition: settlement relies on
+	// cached Pyth prices because priceUpdateData is empty. Production callers
+	// should pass fresh Pyth update data.
 	emptyPriceData := make([][]byte, 0)
 
 	callData, err := optionMarketLiqABI.Pack("settlePosition", trader, seriesID, emptyPriceData)

@@ -60,10 +60,24 @@ func main() {
 	engine := matcher.New(cfg, client, books)
 	liquidator := matcher.NewLiquidator(cfg, client, listener, traders)
 
-	// Replay historical events to populate orderbook
-	// Look back ~345600 blocks on Arbitrum (~24h at 250ms block time)
-	startBlock := utils.SafeStartBlock(ctx, client, 345600)
-	log.Printf("replaying events from block %d", startBlock)
+	// Replay historical events to populate the in-memory orderbook.
+	//
+	// START_BLOCK takes precedence when set. Otherwise replay the last
+	// REPLAY_LOOKBACK_BLOCKS blocks (default 345600, roughly 24h on Arbitrum
+	// at 250ms block time). Orders and positions opened before the replay
+	// start are not loaded, so the liquidator can miss older positions. Set
+	// START_BLOCK to the Orderbook deployment block for full history.
+	startBlock := cfg.StartBlock
+	if startBlock == 0 {
+		startBlock = utils.SafeStartBlock(ctx, client, cfg.ReplayLookbackBlocks)
+		log.Printf("START_BLOCK not set; replaying last %d blocks (from block %d)",
+			cfg.ReplayLookbackBlocks, startBlock)
+	} else {
+		log.Printf("replaying events from START_BLOCK %d", startBlock)
+	}
+	if startBlock > 0 {
+		log.Printf("WARNING: orders/positions opened before block %d are not replayed and may be missed by the liquidator", startBlock)
+	}
 
 	if err := listener.FetchExistingOrders(ctx, startBlock); err != nil {
 		log.Printf("warning: historical replay failed: %v", err)

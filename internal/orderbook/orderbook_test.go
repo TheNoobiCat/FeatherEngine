@@ -3,6 +3,7 @@ package orderbook
 import (
 	"math/big"
 	"math/rand"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -298,6 +299,11 @@ func TestOrderbookHighVolume(t *testing.T) {
 func TestUltimate20MillionOrderStressTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping 20M order stress test in short mode - this will take several minutes and significant RAM")
+	}
+	// This test needs roughly 4-8 GB of RAM and several minutes. Keep it
+	// opt-in so the default `go test ./...` and CI stay fast and reliable.
+	if os.Getenv("FEATHER_STRESS_TEST") != "1" {
+		t.Skip("Skipping 20M order stress test; set FEATHER_STRESS_TEST=1 to run it")
 	}
 
 	const (

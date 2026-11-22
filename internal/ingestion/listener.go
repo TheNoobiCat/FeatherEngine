@@ -269,16 +269,18 @@ func (l *Listener) fetchOrder(ctx context.Context, seriesID, orderID [32]byte) (
 	quantity := outputs[3].(*big.Int)
 	marginLocked := outputs[4].(*big.Int)
 	intent := outputs[5].(uint8)
+	isLiquidation := outputs[6].(bool)
 
 	return &models.Order{
-		OrderID:      orderID,
-		SeriesID:     seriesID,
-		Trader:       trader,
-		IsLong:       isLong,
-		LimitPrice:   new(big.Int).Set(limitPrice),
-		Quantity:     new(big.Int).Set(quantity),
-		MarginLocked: new(big.Int).Set(marginLocked),
-		Intent:       models.OrderIntent(intent),
+		OrderID:       orderID,
+		SeriesID:      seriesID,
+		Trader:        trader,
+		IsLong:        isLong,
+		LimitPrice:    new(big.Int).Set(limitPrice),
+		Quantity:      new(big.Int).Set(quantity),
+		MarginLocked:  new(big.Int).Set(marginLocked),
+		Intent:        models.OrderIntent(intent),
+		IsLiquidation: isLiquidation,
 	}, nil
 }
 
@@ -317,6 +319,7 @@ func (l *Listener) ensureSeries(ctx context.Context, seriesID [32]byte) {
 		IsCall:                outputs[1].(bool),
 		StrikePrice:           outputs[2].(*big.Int),
 		Expiry:                outputs[3].(*big.Int).Uint64(),
+		ContractSize:          new(big.Int).Set(outputs[4].(*big.Int)),
 	}
 
 	l.knownSeriesMu.Lock()

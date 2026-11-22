@@ -41,8 +41,8 @@ func (og *OrderGenerator) generateOrder() *models.Order {
 	isLong := rand.Intn(2) == 0
 
 	// Generate realistic prices around 1 ETH with some spread
-	basePrice := int64(1000000000000000000) // 1 ETH in wei
-	priceSpread := rand.Intn(200) - 100      // -100 to +100
+	basePrice := int64(1000000000000000000)                   // 1 ETH in wei
+	priceSpread := rand.Intn(200) - 100                       // -100 to +100
 	price := basePrice + int64(priceSpread)*10000000000000000 // ±0.1 ETH steps
 
 	// Generate realistic quantities

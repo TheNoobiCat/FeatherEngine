@@ -24,6 +24,11 @@ type Config struct {
 
 	ChainID *big.Int
 
+	// Historical event replay. StartBlock takes precedence when non-zero;
+	// otherwise the engine replays ReplayLookbackBlocks blocks from the head.
+	StartBlock           uint64
+	ReplayLookbackBlocks uint64
+
 	MatchInterval       time.Duration
 	LiquidationInterval time.Duration
 	MaxMatchesPerTx     int
@@ -70,19 +75,30 @@ func Load() (*Config, error) {
 	gasLimit, _ := strconv.ParseUint(getEnvDefault("GAS_LIMIT", "3000000"), 10, 64)
 	maxGasGwei, _ := strconv.ParseInt(getEnvDefault("MAX_GAS_PRICE_GWEI", "5"), 10, 64)
 
+	startBlock, err := strconv.ParseUint(getEnvDefault("START_BLOCK", "0"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid START_BLOCK: %w", err)
+	}
+	replayLookback, err := strconv.ParseUint(getEnvDefault("REPLAY_LOOKBACK_BLOCKS", "345600"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid REPLAY_LOOKBACK_BLOCKS: %w", err)
+	}
+
 	return &Config{
-		PrivateKey:          privateKey,
-		WalletAddr:          walletAddr,
-		AlchemyWSURL:        wsURL,
-		OptionMarketAddr:    common.HexToAddress(optionMarket),
-		OrderbookAddr:       common.HexToAddress(orderbookAddr),
-		MarginAccountAddr:   common.HexToAddress(marginAccountAddr),
-		ChainID:             big.NewInt(chainID),
-		MatchInterval:       time.Duration(matchIntervalMs) * time.Millisecond,
-		LiquidationInterval: time.Duration(liqIntervalMs) * time.Millisecond,
-		MaxMatchesPerTx:     maxMatches,
-		GasLimit:            gasLimit,
-		MaxGasPriceWei:      new(big.Int).Mul(big.NewInt(maxGasGwei), big.NewInt(1e9)),
+		PrivateKey:           privateKey,
+		WalletAddr:           walletAddr,
+		AlchemyWSURL:         wsURL,
+		OptionMarketAddr:     common.HexToAddress(optionMarket),
+		OrderbookAddr:        common.HexToAddress(orderbookAddr),
+		MarginAccountAddr:    common.HexToAddress(marginAccountAddr),
+		ChainID:              big.NewInt(chainID),
+		StartBlock:           startBlock,
+		ReplayLookbackBlocks: replayLookback,
+		MatchInterval:        time.Duration(matchIntervalMs) * time.Millisecond,
+		LiquidationInterval:  time.Duration(liqIntervalMs) * time.Millisecond,
+		MaxMatchesPerTx:      maxMatches,
+		GasLimit:             gasLimit,
+		MaxGasPriceWei:       new(big.Int).Mul(big.NewInt(maxGasGwei), big.NewInt(1e9)),
 	}, nil
 }
 

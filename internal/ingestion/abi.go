@@ -36,7 +36,8 @@ const orderbookABIJSON = `[
       {"name": "underlyingPriceFeedId", "type": "bytes32"},
       {"name": "isCall", "type": "bool"},
       {"name": "strikePrice", "type": "uint256"},
-      {"name": "expiry", "type": "uint256"}
+      {"name": "expiry", "type": "uint256"},
+      {"name": "contractSize", "type": "uint256"}
     ],
     "stateMutability": "view",
     "type": "function"
@@ -53,7 +54,8 @@ const orderbookABIJSON = `[
       {"name": "limitPrice", "type": "uint256"},
       {"name": "quantity", "type": "uint256"},
       {"name": "marginLocked", "type": "uint256"},
-      {"name": "intent", "type": "uint8"}
+      {"name": "intent", "type": "uint8"},
+      {"name": "isLiquidation", "type": "bool"}
     ],
     "stateMutability": "view",
     "type": "function"

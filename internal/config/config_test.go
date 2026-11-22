@@ -133,6 +133,66 @@ func TestLoadDefaultValues(t *testing.T) {
 	if cfg.GasLimit != 3000000 {
 		t.Errorf("GasLimit default = %d, want 3000000", cfg.GasLimit)
 	}
+
+	if cfg.StartBlock != 0 {
+		t.Errorf("StartBlock default = %d, want 0", cfg.StartBlock)
+	}
+
+	if cfg.ReplayLookbackBlocks != 345600 {
+		t.Errorf("ReplayLookbackBlocks default = %d, want 345600", cfg.ReplayLookbackBlocks)
+	}
+}
+
+func TestLoadReplayConfig(t *testing.T) {
+	envVars := map[string]string{
+		"PRIVATE_KEY":            "1234567890123456789012345678901234567890123456789012345678901234",
+		"ALCHEMY_WS_URL":         "wss://test.alchemy.com/ws",
+		"OPTION_MARKET_ADDRESS":  "0x1234567890123456789012345678901234567890",
+		"ORDERBOOK_ADDRESS":      "0x1234567890123456789012345678901234567890",
+		"MARGIN_ACCOUNT_ADDRESS": "0x1234567890123456789012345678901234567890",
+		"START_BLOCK":            "12345678",
+		"REPLAY_LOOKBACK_BLOCKS": "999",
+	}
+
+	for k, v := range envVars {
+		os.Setenv(k, v)
+		defer os.Unsetenv(k)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.StartBlock != 12345678 {
+		t.Errorf("StartBlock = %d, want 12345678", cfg.StartBlock)
+	}
+
+	if cfg.ReplayLookbackBlocks != 999 {
+		t.Errorf("ReplayLookbackBlocks = %d, want 999", cfg.ReplayLookbackBlocks)
+	}
+}
+
+func TestLoadInvalidReplayConfig(t *testing.T) {
+	baseEnv := map[string]string{
+		"PRIVATE_KEY":            "1234567890123456789012345678901234567890123456789012345678901234",
+		"ALCHEMY_WS_URL":         "wss://test.alchemy.com/ws",
+		"OPTION_MARKET_ADDRESS":  "0x1234567890123456789012345678901234567890",
+		"ORDERBOOK_ADDRESS":      "0x1234567890123456789012345678901234567890",
+		"MARGIN_ACCOUNT_ADDRESS": "0x1234567890123456789012345678901234567890",
+	}
+
+	for k, v := range baseEnv {
+		os.Setenv(k, v)
+		defer os.Unsetenv(k)
+	}
+
+	os.Setenv("START_BLOCK", "not-a-number")
+	defer os.Unsetenv("START_BLOCK")
+
+	if _, err := Load(); err == nil {
+		t.Error("Load() should fail with an invalid START_BLOCK")
+	}
 }
 
 func TestGetEnvDefault(t *testing.T) {

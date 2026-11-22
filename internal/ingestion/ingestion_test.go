@@ -88,3 +88,61 @@ func TestProcessFillEvent(t *testing.T) {
 		t.Error("Listener should not be nil")
 	}
 }
+
+func TestOrderbookABIGetSeriesOutputs(t *testing.T) {
+	method, ok := OrderbookABI.Methods["getSeries"]
+	if !ok {
+		t.Fatal("getSeries missing from Orderbook ABI")
+	}
+
+	want := []struct {
+		name string
+		typ  string
+	}{
+		{"underlyingPriceFeedId", "bytes32"},
+		{"isCall", "bool"},
+		{"strikePrice", "uint256"},
+		{"expiry", "uint256"},
+		{"contractSize", "uint256"},
+	}
+
+	if len(method.Outputs) != len(want) {
+		t.Fatalf("getSeries has %d outputs, want %d", len(method.Outputs), len(want))
+	}
+	for i, w := range want {
+		if method.Outputs[i].Name != w.name || method.Outputs[i].Type.String() != w.typ {
+			t.Errorf("getSeries output %d = %s %s, want %s %s",
+				i, method.Outputs[i].Type, method.Outputs[i].Name, w.typ, w.name)
+		}
+	}
+}
+
+func TestOrderbookABIOrdersOutputs(t *testing.T) {
+	method, ok := OrderbookABI.Methods["orders"]
+	if !ok {
+		t.Fatal("orders missing from Orderbook ABI")
+	}
+
+	want := []struct {
+		name string
+		typ  string
+	}{
+		{"trader", "address"},
+		{"isLong", "bool"},
+		{"limitPrice", "uint256"},
+		{"quantity", "uint256"},
+		{"marginLocked", "uint256"},
+		{"intent", "uint8"},
+		{"isLiquidation", "bool"},
+	}
+
+	if len(method.Outputs) != len(want) {
+		t.Fatalf("orders has %d outputs, want %d", len(method.Outputs), len(want))
+	}
+	for i, w := range want {
+		if method.Outputs[i].Name != w.name || method.Outputs[i].Type.String() != w.typ {
+			t.Errorf("orders output %d = %s %s, want %s %s",
+				i, method.Outputs[i].Type, method.Outputs[i].Name, w.typ, w.name)
+		}
+	}
+}

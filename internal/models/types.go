@@ -18,14 +18,15 @@ const (
 
 // Order mirrors the on-chain Orderbook.Order struct
 type Order struct {
-	OrderID      [32]byte       // keccak256 order hash
-	SeriesID     [32]byte       // series key
-	Trader       common.Address // owner
-	IsLong       bool           // buy side = true
-	LimitPrice   *big.Int       // 18 decimals
-	Quantity     *big.Int       // contract units
-	MarginLocked *big.Int       // 18 decimals
-	Intent       OrderIntent
+	OrderID       [32]byte       // keccak256 order hash
+	SeriesID      [32]byte       // series key
+	Trader        common.Address // owner
+	IsLong        bool           // buy side = true
+	LimitPrice    *big.Int       // 18 decimals
+	Quantity      *big.Int       // contract units
+	MarginLocked  *big.Int       // 18 decimals
+	Intent        OrderIntent
+	IsLiquidation bool // order created by the liquidation engine
 }
 
 // Series mirrors the on-chain Orderbook.Series struct
@@ -35,6 +36,7 @@ type Series struct {
 	IsCall                bool
 	StrikePrice           *big.Int // 18 decimals
 	Expiry                uint64   // unix timestamp
+	ContractSize          *big.Int // contract size in underlying asset units (18 decimals)
 }
 
 // Market mirrors on-chain OptionMarket.Market
