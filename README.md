@@ -150,6 +150,12 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 - The event pusher is minimal and relies on on-chain state as the source of
   truth.
 
+## Related repositories
+
+- [BrokerFi frontend](https://github.com/TheNoobiCat/BrokerFi) — archived Next.js testnet frontend
+- [BrokerFi contracts](https://github.com/TheNoobiCat/bf-contracts) — archived Solidity reference
+- [InstantExecutionRelayer](https://github.com/TheNoobiCat/InstantExecutionRelayer) — session-key relayer and perps keeper
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
